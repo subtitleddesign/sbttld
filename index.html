@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>subtitles.</title>
+<style>
+/* ── page chrome (replace with your own styles) ── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0b0b0b;
+  color: #f0ebe0;
+  font-family: 'Courier New', Courier, monospace;
+  min-height: 100vh;
+}
+.page-content {
+  padding: 6rem 2rem;
+  text-align: center;
+  font-size: clamp(1.5rem, 4vw, 3.5rem);
+  letter-spacing: -0.03em;
+  opacity: 0.12;
+  user-select: none;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GAME SECTION — drop this block (styles + HTML + script) into
+   any page. The only dependency is a <canvas id="subtitles-game">.
+   ════════════════════════════════════════════════════════════════ */
+
+.subtitles-game-section {
+  width: 100%;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.subtitles-game-section .sg-bar {
+  border-top: 1px solid rgba(240, 235, 224, 0.1);
+  padding: 7px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #f0ebe0;
+  opacity: 0.3;
+}
+
+.subtitles-game-section .sg-shell {
+  position: relative;
+  width: 100%;
+  background: #0b0b0b;
+  overflow: hidden;
+}
+
+.subtitles-game-section canvas {
+  display: block;
+  width: 100%;
+  height: 440px;
+  cursor: none;
+}
+
+/* CRT scanline overlay */
+.subtitles-game-section .sg-shell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 3px,
+    rgba(0, 0, 0, 0.07) 3px,
+    rgba(0, 0, 0, 0.07) 4px
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
+.subtitles-game-section .sg-hint {
+  border-top: 1px solid rgba(240, 235, 224, 0.06);
+  padding: 7px 16px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-transform: uppercase;
+  color: #f0ebe0;
+  opacity: 0.18;
+}
+</style>
+</head>
+<body>
+
+<!-- your page content above -->
+<div class="page-content">subtitles<span style="opacity:.4">_</span></div>
+
+<!-- ── GAME SECTION — paste from here ──────────────────────── -->
+<section class="subtitles-game-section">
+  <div class="sg-bar">
+    <span>subtitles.exe</span>
+    <span>arcade · 1p</span>
+  </div>
+  <div class="sg-shell">
+    <canvas id="subtitles-game"></canvas>
+  </div>
+  <div class="sg-hint">move mouse · click or space to launch</div>
+</section>
+<!-- ── end game section ─────────────────────────────────────── -->
+
+<script>
+(function () {
+  'use strict';
+
+  const canvas = document.getElementById('subtitles-game');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  const INK   = '#f0ebe0';
+  const BG    = '#0b0b0b';
+  const LIVES = 3;
+
+  // ── resize ──────────────────────────────────────────────────────
+  let W, H;
+
+  function resize() {
+    W = canvas.offsetWidth;
+    H = canvas.offsetHeight;
+    canvas.width  = W;
+    canvas.height = H;
+  }
+
+  // ── helpers ─────────────────────────────────────────────────────
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const rnd   = (lo, hi) => lo + Math.random() * (hi - lo);
+
+  // ── state ───────────────────────────────────────────────────────
+  let phase = 'idle'; // idle | play | over | win
+  let score, lives;
+  let paddle, ball, bricks, sparks;
+  let mouseX = -1;
+
+  const brickR = () => clamp(Math.round(W / 55), 11, 22);
+
+  // ── init ────────────────────────────────────────────────────────
+  function init() {
+    resize();
+
+    const pw = clamp(W * 0.13, 72, 150);
+    paddle = { x: W / 2 - pw / 2, y: H - 42, w: pw, h: 4 };
+
+    const br = brickR();
+    ball = { x: W / 2, y: paddle.y - br - 2, vx: 0, vy: 0, stuck: true };
+
+    bricks = buildBricks();
+    sparks = [];
+    score  = 0;
+    lives  = LIVES;
+    phase  = 'idle';
+  }
+
+  function buildBricks() {
+    const r   = brickR();
+    const gap = 7;
+    const cols = Math.floor((W - gap) / (r * 2 + gap));
+    const sx   = (W - gap) / cols; // x spacing centre-to-centre
+    const sy   = r * 2 + 10;      // y spacing
+    const rows = 4;
+    const top  = 30 + r;
+    const out  = [];
+
+    for (let row = 0; row < rows; row++) {
+      // stagger alternate rows for honeycomb look
+      const even   = row % 2 === 0;
+      const n      = even ? cols : cols - 1;
+      const offset = even ? 0 : sx * 0.5;
+      for (let col = 0; col < n; col++) {
+        out.push({
+          x: gap * 0.5 + offset + col * sx + r,
+          y: top + row * sy,
+          r, row, alive: true,
+        });
+      }
+    }
+    return out;
+  }
+
+  // ── launch ──────────────────────────────────────────────────────
+  function launch() {
+    if (phase === 'over' || phase === 'win') init();
+    const spd  = clamp(H * 0.01, 4, 10);
+    const a    = -Math.PI / 2 + rnd(-0.55, 0.55);
+    ball.vx    = Math.cos(a) * spd;
+    ball.vy    = Math.sin(a) * spd;
+    ball.stuck = false;
+    phase      = 'play';
+  }
+
+  // ── input ───────────────────────────────────────────────────────
+  function ptrX(e) {
+    const r = canvas.getBoundingClientRect();
+    return ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) * (W / r.width);
+  }
+
+  canvas.addEventListener('mousemove', e => { mouseX = ptrX(e); });
+  canvas.addEventListener('click',     e => { mouseX = ptrX(e); launch(); });
+
+  canvas.addEventListener('touchmove',  e => { e.preventDefault(); mouseX = ptrX(e); }, { passive: false });
+  canvas.addEventListener('touchstart', e => { mouseX = ptrX(e); launch(); }, { passive: false });
+
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' && canvas.getBoundingClientRect().bottom > 0) {
+      e.preventDefault();
+      launch();
+    }
+  });
+
+  // ── update ──────────────────────────────────────────────────────
+  function update() {
+    if (mouseX >= 0) {
+      paddle.x = clamp(mouseX - paddle.w / 2, 0, W - paddle.w);
+    }
+
+    if (ball.stuck) {
+      ball.x = paddle.x + paddle.w / 2;
+      ball.y = paddle.y - brickR() - 2;
+    }
+
+    if (phase !== 'play') return;
+
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    const r = brickR();
+
+    // walls
+    if (ball.x - r < 0)  { ball.x = r;     ball.vx =  Math.abs(ball.vx); }
+    if (ball.x + r > W)  { ball.x = W - r; ball.vx = -Math.abs(ball.vx); }
+    if (ball.y - r < 0)  { ball.y = r;     ball.vy =  Math.abs(ball.vy); }
+
+    // minimum vertical speed — prevents the ball going flat forever
+    if (Math.abs(ball.vy) < 1.8) ball.vy = ball.vy < 0 ? -1.8 : 1.8;
+
+    // paddle
+    const { x: px, y: py, w: pw, h: ph } = paddle;
+    if (
+      ball.vy > 0 &&
+      ball.y + r >= py &&
+      ball.y - r <= py + ph + 3 &&
+      ball.x + r >= px &&
+      ball.x - r <= px + pw
+    ) {
+      const rel   = (ball.x - (px + pw / 2)) / (pw / 2);
+      const angle = rel * (65 * Math.PI / 180) - Math.PI / 2;
+      const spd   = clamp(Math.hypot(ball.vx, ball.vy), 3, H * 0.016);
+      ball.vx = Math.cos(angle) * spd;
+      ball.vy = Math.sin(angle) * spd;
+      ball.y  = py - r - 1;
+    }
+
+    // ball lost
+    if (ball.y - r > H + 16) {
+      if (--lives <= 0) {
+        phase = 'over';
+      } else {
+        ball.stuck = true;
+        ball.vx = ball.vy = 0;
+        phase = 'idle';
+      }
+      return;
+    }
+
+    // brick hits (circle–circle)
+    let anyAlive = false;
+    for (const b of bricks) {
+      if (!b.alive) continue;
+      anyAlive = true;
+      const dx   = ball.x - b.x;
+      const dy   = ball.y - b.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < r + b.r) {
+        const nx = dx / dist, ny = dy / dist;
+        const dot = ball.vx * nx + ball.vy * ny;
+        ball.vx -= 2 * dot * nx;
+        ball.vy -= 2 * dot * ny;
+        ball.x  += nx * ((r + b.r) - dist + 0.5);
+        ball.y  += ny * ((r + b.r) - dist + 0.5);
+        b.alive = false;
+        score  += (5 - b.row) * 10;
+        spawnSparks(b.x, b.y);
+        // gentle speed creep per hit
+        const s = Math.hypot(ball.vx, ball.vy);
+        const ns = Math.min(s * 1.018, H * 0.018);
+        ball.vx = ball.vx / s * ns;
+        ball.vy = ball.vy / s * ns;
+        break; // one brick per frame prevents tunnelling
+      }
+    }
+    if (!anyAlive) phase = 'win';
+
+    // sparks
+    for (const s of sparks) { s.x += s.vx; s.y += s.vy; s.vy += 0.2; s.life--; }
+    sparks = sparks.filter(s => s.life > 0);
+  }
+
+  function spawnSparks(x, y) {
+    for (let i = 0; i < 12; i++) {
+      const a = rnd(0, Math.PI * 2), spd = rnd(0.8, 4);
+      sparks.push({ x, y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+                    life: 28 + (Math.random()*22|0), maxLife: 50, size: rnd(1,3) });
+    }
+  }
+
+  // ── draw ────────────────────────────────────────────────────────
+
+  // The brand mark: a circle containing the underscore "_"
+  function drawMark(x, y, r, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle   = BG;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    ctx.fillStyle    = INK;
+    ctx.font         = `bold ${Math.round(r * 0.7)}px 'Courier New', monospace`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('_', x, y - r * 0.04);
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    // bricks
+    const rowAlpha = [1, 0.72, 0.52, 0.36];
+    for (const b of bricks) {
+      if (!b.alive) continue;
+      drawMark(b.x, b.y, b.r, rowAlpha[b.row] ?? 0.5);
+    }
+
+    // sparks
+    for (const s of sparks) {
+      ctx.save();
+      ctx.globalAlpha = (s.life / s.maxLife) * 0.85;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+      ctx.fillStyle = INK;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // paddle — the underscore bar
+    ctx.save();
+    ctx.shadowColor = INK;
+    ctx.shadowBlur  = 14;
+    ctx.fillStyle   = INK;
+    ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+    ctx.restore();
+
+    // ball
+    ctx.save();
+    ctx.shadowColor = INK;
+    ctx.shadowBlur  = 22;
+    drawMark(ball.x, ball.y, brickR(), 1);
+    ctx.restore();
+
+    // HUD
+    ctx.save();
+    ctx.globalAlpha  = 0.32;
+    ctx.fillStyle    = INK;
+    ctx.font         = `9px 'Courier New', monospace`;
+    ctx.textBaseline = 'bottom';
+    ctx.textAlign    = 'left';
+    ctx.fillText(`score  ${String(score).padStart(6, '0')}`, 14, H - 10);
+    ctx.textAlign    = 'right';
+    ctx.fillText(`lives  ${'●'.repeat(lives)}${'·'.repeat(LIVES - lives)}`, W - 14, H - 10);
+    ctx.restore();
+
+    // overlays
+    if (phase === 'idle') {
+      overlay('_', 'click or space to launch', false);
+    } else if (phase === 'over') {
+      overlay('game over_', `score ${score}  ·  click to retry`, true);
+    } else if (phase === 'win') {
+      overlay('cleared_', `score ${score}  ·  click for another round`, true);
+    }
+  }
+
+  function overlay(title, sub, dimBg) {
+    if (dimBg) {
+      ctx.fillStyle = 'rgba(11,11,11,0.8)';
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.save();
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle    = INK;
+    ctx.font         = `bold ${Math.round(H * 0.11)}px 'Courier New', monospace`;
+    ctx.fillText(title, W / 2, sub ? H / 2 - H * 0.075 : H / 2);
+    if (sub) {
+      ctx.globalAlpha = 0.45;
+      ctx.font        = `${Math.round(H * 0.043)}px 'Courier New', monospace`;
+      ctx.fillText(sub, W / 2, H / 2 + H * 0.06);
+    }
+    ctx.restore();
+  }
+
+  // ── loop ────────────────────────────────────────────────────────
+  function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+  window.addEventListener('resize', init);
+  init();
+  loop();
+}());
+</script>
+
+</body>
+</html>
