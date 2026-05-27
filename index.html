@@ -5,26 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>subtitles.</title>
 <style>
-/* ── page chrome (replace with your own styles) ── */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --ink: #f0ebe0;
+  --bg:  #0b0b0b;
+}
+
+html, body { height: 100%; }
+
 body {
-  background: #0b0b0b;
-  color: #f0ebe0;
+  background: var(--bg);
+  color: var(--ink);
   font-family: 'Courier New', Courier, monospace;
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
+
 .page-content {
-  padding: 6rem 2rem;
-  text-align: center;
-  font-size: clamp(1.5rem, 4vw, 3.5rem);
+  flex: 1;
+  display: grid;
+  place-items: center;
+  font-size: clamp(2rem, 5vw, 4rem);
   letter-spacing: -0.03em;
-  opacity: 0.12;
+  opacity: 0.1;
   user-select: none;
+  pointer-events: none;
 }
 
 /* ════════════════════════════════════════════════════════════════
-   GAME SECTION — drop this block (styles + HTML + script) into
-   any page. The only dependency is a <canvas id="subtitles-game">.
+   GAME SECTION — self-contained drop-in
    ════════════════════════════════════════════════════════════════ */
 
 .subtitles-game-section {
@@ -32,7 +43,7 @@ body {
   font-family: 'Courier New', Courier, monospace;
 }
 
-.subtitles-game-section .sg-bar {
+.sg-bar {
   border-top: 1px solid rgba(240, 235, 224, 0.1);
   padding: 7px 16px;
   display: flex;
@@ -41,26 +52,26 @@ body {
   font-size: 9px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #f0ebe0;
-  opacity: 0.3;
+  color: var(--ink);
+  opacity: 0.28;
 }
 
-.subtitles-game-section .sg-shell {
+.sg-shell {
   position: relative;
   width: 100%;
-  background: #0b0b0b;
+  background: var(--bg);
   overflow: hidden;
 }
 
-.subtitles-game-section canvas {
+.sg-shell canvas {
   display: block;
   width: 100%;
   height: 440px;
   cursor: none;
 }
 
-/* CRT scanline overlay */
-.subtitles-game-section .sg-shell::after {
+/* CRT scanlines */
+.sg-shell::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -75,35 +86,33 @@ body {
   z-index: 2;
 }
 
-.subtitles-game-section .sg-hint {
+.sg-hint {
   border-top: 1px solid rgba(240, 235, 224, 0.06);
   padding: 7px 16px;
   font-size: 9px;
   letter-spacing: 0.12em;
   text-align: center;
   text-transform: uppercase;
-  color: #f0ebe0;
-  opacity: 0.18;
+  color: var(--ink);
+  opacity: 0.16;
 }
 </style>
 </head>
 <body>
 
-<!-- your page content above -->
-<div class="page-content">subtitles<span style="opacity:.4">_</span></div>
+<div class="page-content">subtitles<span style="opacity:.35">_</span></div>
 
-<!-- ── GAME SECTION — paste from here ──────────────────────── -->
+<!-- ── GAME SECTION ── -->
 <section class="subtitles-game-section">
   <div class="sg-bar">
     <span>subtitles.exe</span>
-    <span>arcade · 1p</span>
+    <span>squash · 1p</span>
   </div>
   <div class="sg-shell">
     <canvas id="subtitles-game"></canvas>
   </div>
-  <div class="sg-hint">move mouse · click or space to launch</div>
+  <div class="sg-hint">move mouse · click or space to serve</div>
 </section>
-<!-- ── end game section ─────────────────────────────────────── -->
 
 <script>
 (function () {
@@ -117,7 +126,6 @@ body {
   const BG    = '#0b0b0b';
   const LIVES = 3;
 
-  // ── resize ──────────────────────────────────────────────────────
   let W, H;
 
   function resize() {
@@ -127,100 +135,81 @@ body {
     canvas.height = H;
   }
 
-  // ── helpers ─────────────────────────────────────────────────────
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const rnd   = (lo, hi) => lo + Math.random() * (hi - lo);
+  const rnd   = (lo, hi)    => lo + Math.random() * (hi - lo);
 
-  // ── state ───────────────────────────────────────────────────────
-  let phase = 'idle'; // idle | play | over | win
-  let score, lives;
-  let paddle, ball, bricks, sparks;
-  let mouseX = -1;
+  // The S rendered at this height in px
+  const sSize = () => clamp(Math.round(H * 0.115), 32, 58);
+  // Collision radius — roughly half the cap-height
+  const sRadius = () => sSize() * 0.42;
 
-  const brickR = () => clamp(Math.round(W / 55), 11, 22);
+  // ── State ──────────────────────────────────────────────────────
+  let phase = 'idle'; // idle | play | over
+  let score, lives, hiScore = 0;
+  let paddle, ball;
+  let mouseX     = -1;
+  let ceilFlash  = 0; // frames to flash ceiling after ceiling hit
+  let paddleFlash = 0; // frames to flash paddle after hit
 
-  // ── init ────────────────────────────────────────────────────────
+  // ── Init ────────────────────────────────────────────────────────
   function init() {
     resize();
 
-    const pw = clamp(W * 0.13, 72, 150);
-    paddle = { x: W / 2 - pw / 2, y: H - 42, w: pw, h: 4 };
+    const pw = clamp(W * 0.14, 80, 160);
+    paddle = { x: W / 2 - pw / 2, y: H - 44, w: pw, h: 5 };
 
-    const br = brickR();
-    ball = { x: W / 2, y: paddle.y - br - 2, vx: 0, vy: 0, stuck: true };
+    ball = {
+      x: W / 2,
+      y: paddle.y - sRadius() - 4,
+      vx: 0, vy: 0,
+      angle: 0,   // spin accumulator
+      stuck: true,
+    };
 
-    bricks = buildBricks();
-    sparks = [];
-    score  = 0;
-    lives  = LIVES;
-    phase  = 'idle';
+    score       = 0;
+    lives       = LIVES;
+    phase       = 'idle';
+    ceilFlash   = 0;
+    paddleFlash = 0;
   }
 
-  function buildBricks() {
-    const r   = brickR();
-    const gap = 7;
-    const cols = Math.floor((W - gap) / (r * 2 + gap));
-    const sx   = (W - gap) / cols; // x spacing centre-to-centre
-    const sy   = r * 2 + 10;      // y spacing
-    const rows = 4;
-    const top  = 30 + r;
-    const out  = [];
-
-    for (let row = 0; row < rows; row++) {
-      // stagger alternate rows for honeycomb look
-      const even   = row % 2 === 0;
-      const n      = even ? cols : cols - 1;
-      const offset = even ? 0 : sx * 0.5;
-      for (let col = 0; col < n; col++) {
-        out.push({
-          x: gap * 0.5 + offset + col * sx + r,
-          y: top + row * sy,
-          r, row, alive: true,
-        });
-      }
-    }
-    return out;
-  }
-
-  // ── launch ──────────────────────────────────────────────────────
-  function launch() {
-    if (phase === 'over' || phase === 'win') init();
-    const spd  = clamp(H * 0.01, 4, 10);
-    const a    = -Math.PI / 2 + rnd(-0.55, 0.55);
-    ball.vx    = Math.cos(a) * spd;
-    ball.vy    = Math.sin(a) * spd;
+  // ── Launch ──────────────────────────────────────────────────────
+  function serve() {
+    if (phase === 'over') init();
+    const spd = clamp(H * 0.011, 5, 10);
+    const a   = -Math.PI / 2 + rnd(-0.45, 0.45);
+    ball.vx   = Math.cos(a) * spd;
+    ball.vy   = Math.sin(a) * spd;
     ball.stuck = false;
     phase      = 'play';
   }
 
-  // ── input ───────────────────────────────────────────────────────
+  // ── Input ────────────────────────────────────────────────────────
   function ptrX(e) {
-    const r = canvas.getBoundingClientRect();
-    return ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) * (W / r.width);
+    const rect = canvas.getBoundingClientRect();
+    return ((e.touches ? e.touches[0].clientX : e.clientX) - rect.left) * (W / rect.width);
   }
 
-  canvas.addEventListener('mousemove', e => { mouseX = ptrX(e); });
-  canvas.addEventListener('click',     e => { mouseX = ptrX(e); launch(); });
-
+  canvas.addEventListener('mousemove',  e => { mouseX = ptrX(e); });
+  canvas.addEventListener('click',      e => { mouseX = ptrX(e); serve(); });
   canvas.addEventListener('touchmove',  e => { e.preventDefault(); mouseX = ptrX(e); }, { passive: false });
-  canvas.addEventListener('touchstart', e => { mouseX = ptrX(e); launch(); }, { passive: false });
+  canvas.addEventListener('touchstart', e => { mouseX = ptrX(e); serve(); }, { passive: false });
 
   document.addEventListener('keydown', e => {
-    if (e.code === 'Space' && canvas.getBoundingClientRect().bottom > 0) {
-      e.preventDefault();
-      launch();
-    }
+    if (e.code === 'Space') { e.preventDefault(); serve(); }
   });
 
-  // ── update ──────────────────────────────────────────────────────
+  // ── Update ────────────────────────────────────────────────────────
   function update() {
+    // paddle tracks mouse
     if (mouseX >= 0) {
       paddle.x = clamp(mouseX - paddle.w / 2, 0, W - paddle.w);
     }
 
+    // stuck ball rides paddle centre
     if (ball.stuck) {
       ball.x = paddle.x + paddle.w / 2;
-      ball.y = paddle.y - brickR() - 2;
+      ball.y = paddle.y - sRadius() - 4;
     }
 
     if (phase !== 'play') return;
@@ -228,104 +217,92 @@ body {
     ball.x += ball.vx;
     ball.y += ball.vy;
 
-    const r = brickR();
+    // Spin: driven by horizontal velocity so it feels physical
+    ball.angle += ball.vx * 0.055;
 
-    // walls
-    if (ball.x - r < 0)  { ball.x = r;     ball.vx =  Math.abs(ball.vx); }
-    if (ball.x + r > W)  { ball.x = W - r; ball.vx = -Math.abs(ball.vx); }
-    if (ball.y - r < 0)  { ball.y = r;     ball.vy =  Math.abs(ball.vy); }
+    const r = sRadius();
 
-    // minimum vertical speed — prevents the ball going flat forever
-    if (Math.abs(ball.vy) < 1.8) ball.vy = ball.vy < 0 ? -1.8 : 1.8;
+    // ── Walls ──
+    if (ball.x - r < 0) {
+      ball.x = r;
+      ball.vx = Math.abs(ball.vx);
+    }
+    if (ball.x + r > W) {
+      ball.x = W - r;
+      ball.vx = -Math.abs(ball.vx);
+    }
 
-    // paddle
+    // ── Ceiling ──
+    if (ball.y - r < 0) {
+      ball.y = r;
+      ball.vy = Math.abs(ball.vy);
+      ceilFlash = 10;
+    }
+
+    // Ensure the ball never goes completely horizontal
+    if (Math.abs(ball.vy) < 2) {
+      ball.vy = ball.vy < 0 ? -2 : 2;
+    }
+
+    // ── Paddle (underscore) ──
     const { x: px, y: py, w: pw, h: ph } = paddle;
     if (
       ball.vy > 0 &&
       ball.y + r >= py &&
-      ball.y - r <= py + ph + 3 &&
+      ball.y - r <= py + ph + 5 &&
       ball.x + r >= px &&
       ball.x - r <= px + pw
     ) {
-      const rel   = (ball.x - (px + pw / 2)) / (pw / 2);
-      const angle = rel * (65 * Math.PI / 180) - Math.PI / 2;
-      const spd   = clamp(Math.hypot(ball.vx, ball.vy), 3, H * 0.016);
+      // Deflect angle based on hit position along paddle
+      const rel   = clamp((ball.x - (px + pw / 2)) / (pw / 2), -1, 1);
+      const angle = rel * (58 * Math.PI / 180) - Math.PI / 2;
+      const spd   = clamp(Math.hypot(ball.vx, ball.vy), 4, H * 0.02);
+
       ball.vx = Math.cos(angle) * spd;
       ball.vy = Math.sin(angle) * spd;
       ball.y  = py - r - 1;
+
+      score++;
+      paddleFlash = 14;
+
+      // Speed nudge every 5 hits
+      if (score % 5 === 0) {
+        const s  = Math.hypot(ball.vx, ball.vy);
+        const ns = Math.min(s * 1.1, H * 0.022);
+        ball.vx  = (ball.vx / s) * ns;
+        ball.vy  = (ball.vy / s) * ns;
+      }
     }
 
-    // ball lost
-    if (ball.y - r > H + 16) {
+    // ── Ball lost ──
+    if (ball.y - r > H + 30) {
       if (--lives <= 0) {
-        phase = 'over';
+        hiScore = Math.max(hiScore, score);
+        phase   = 'over';
       } else {
         ball.stuck = true;
-        ball.vx = ball.vy = 0;
-        phase = 'idle';
-      }
-      return;
-    }
-
-    // brick hits (circle–circle)
-    let anyAlive = false;
-    for (const b of bricks) {
-      if (!b.alive) continue;
-      anyAlive = true;
-      const dx   = ball.x - b.x;
-      const dy   = ball.y - b.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < r + b.r) {
-        const nx = dx / dist, ny = dy / dist;
-        const dot = ball.vx * nx + ball.vy * ny;
-        ball.vx -= 2 * dot * nx;
-        ball.vy -= 2 * dot * ny;
-        ball.x  += nx * ((r + b.r) - dist + 0.5);
-        ball.y  += ny * ((r + b.r) - dist + 0.5);
-        b.alive = false;
-        score  += (5 - b.row) * 10;
-        spawnSparks(b.x, b.y);
-        // gentle speed creep per hit
-        const s = Math.hypot(ball.vx, ball.vy);
-        const ns = Math.min(s * 1.018, H * 0.018);
-        ball.vx = ball.vx / s * ns;
-        ball.vy = ball.vy / s * ns;
-        break; // one brick per frame prevents tunnelling
+        ball.vx    = 0;
+        ball.vy    = 0;
+        phase      = 'idle';
       }
     }
-    if (!anyAlive) phase = 'win';
 
-    // sparks
-    for (const s of sparks) { s.x += s.vx; s.y += s.vy; s.vy += 0.2; s.life--; }
-    sparks = sparks.filter(s => s.life > 0);
+    if (ceilFlash   > 0) ceilFlash--;
+    if (paddleFlash > 0) paddleFlash--;
   }
 
-  function spawnSparks(x, y) {
-    for (let i = 0; i < 12; i++) {
-      const a = rnd(0, Math.PI * 2), spd = rnd(0.8, 4);
-      sparks.push({ x, y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
-                    life: 28 + (Math.random()*22|0), maxLife: 50, size: rnd(1,3) });
-    }
-  }
-
-  // ── draw ────────────────────────────────────────────────────────
-
-  // The brand mark: a circle containing the underscore "_"
-  function drawMark(x, y, r, alpha) {
+  // ── Draw ──────────────────────────────────────────────────────────
+  function drawSpinningS(x, y, size, angle) {
     ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle   = BG;
-    ctx.fill();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth   = 1.5;
-    ctx.stroke();
-    ctx.fillStyle    = INK;
-    ctx.font         = `bold ${Math.round(r * 0.7)}px 'Courier New', monospace`;
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.font         = `900 ${size}px Georgia, 'Times New Roman', serif`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('_', x, y - r * 0.04);
+    ctx.fillStyle    = INK;
+    ctx.shadowColor  = INK;
+    ctx.shadowBlur   = 18;
+    ctx.fillText('S', 0, 2); // +2 optical correction for serif baseline
     ctx.restore();
   }
 
@@ -333,82 +310,100 @@ body {
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
 
-    // bricks
-    const rowAlpha = [1, 0.72, 0.52, 0.36];
-    for (const b of bricks) {
-      if (!b.alive) continue;
-      drawMark(b.x, b.y, b.r, rowAlpha[b.row] ?? 0.5);
-    }
+    // ── Ceiling line ──
+    ctx.save();
+    ctx.globalAlpha = ceilFlash > 0 ? 0.9 : 0.1;
+    ctx.shadowColor = INK;
+    ctx.shadowBlur  = ceilFlash > 0 ? 16 : 0;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth   = ceilFlash > 0 ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(0, 1);
+    ctx.lineTo(W, 1);
+    ctx.stroke();
+    ctx.restore();
 
-    // sparks
-    for (const s of sparks) {
-      ctx.save();
-      ctx.globalAlpha = (s.life / s.maxLife) * 0.85;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
-      ctx.fillStyle = INK;
-      ctx.fill();
-      ctx.restore();
-    }
-
-    // paddle — the underscore bar
+    // ── Paddle (the underscore) ──
     ctx.save();
     ctx.shadowColor = INK;
-    ctx.shadowBlur  = 14;
+    ctx.shadowBlur  = paddleFlash > 0 ? 24 : 12;
+    ctx.globalAlpha = paddleFlash > 0 ? 1 : 0.88;
     ctx.fillStyle   = INK;
     ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
     ctx.restore();
 
-    // ball
+    // ── Ball ──
     ctx.save();
     ctx.shadowColor = INK;
-    ctx.shadowBlur  = 22;
-    drawMark(ball.x, ball.y, brickR(), 1);
+    ctx.shadowBlur  = 12;
+    drawSpinningS(ball.x, ball.y, sSize(), ball.angle);
     ctx.restore();
 
-    // HUD
+    // ── HUD ──
     ctx.save();
-    ctx.globalAlpha  = 0.32;
     ctx.fillStyle    = INK;
+    ctx.globalAlpha  = 0.3;
     ctx.font         = `9px 'Courier New', monospace`;
     ctx.textBaseline = 'bottom';
     ctx.textAlign    = 'left';
-    ctx.fillText(`score  ${String(score).padStart(6, '0')}`, 14, H - 10);
+    ctx.fillText(`score  ${String(score).padStart(4, '0')}`, 14, H - 10);
     ctx.textAlign    = 'right';
-    ctx.fillText(`lives  ${'●'.repeat(lives)}${'·'.repeat(LIVES - lives)}`, W - 14, H - 10);
+    const pips = '●'.repeat(lives) + '·'.repeat(LIVES - lives);
+    ctx.fillText(`lives  ${pips}`, W - 14, H - 10);
     ctx.restore();
 
-    // overlays
+    // ── Overlays ──
     if (phase === 'idle') {
-      overlay('_', 'click or space to launch', false);
+      hintText('click or space to serve');
     } else if (phase === 'over') {
-      overlay('game over_', `score ${score}  ·  click to retry`, true);
-    } else if (phase === 'win') {
-      overlay('cleared_', `score ${score}  ·  click for another round`, true);
+      gameOverOverlay();
     }
   }
 
-  function overlay(title, sub, dimBg) {
-    if (dimBg) {
-      ctx.fillStyle = 'rgba(11,11,11,0.8)';
-      ctx.fillRect(0, 0, W, H);
-    }
+  function hintText(msg) {
+    ctx.save();
+    ctx.fillStyle    = INK;
+    ctx.globalAlpha  = 0.3;
+    ctx.font         = `${Math.round(H * 0.04)}px 'Courier New', monospace`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    // Position above HUD strip
+    ctx.fillText(msg, W / 2, H - 36);
+    ctx.restore();
+  }
+
+  function gameOverOverlay() {
+    ctx.fillStyle = 'rgba(11,11,11,0.84)';
+    ctx.fillRect(0, 0, W, H);
+
     ctx.save();
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle    = INK;
-    ctx.font         = `bold ${Math.round(H * 0.11)}px 'Courier New', monospace`;
-    ctx.fillText(title, W / 2, sub ? H / 2 - H * 0.075 : H / 2);
-    if (sub) {
-      ctx.globalAlpha = 0.45;
-      ctx.font        = `${Math.round(H * 0.043)}px 'Courier New', monospace`;
-      ctx.fillText(sub, W / 2, H / 2 + H * 0.06);
-    }
+
+    // Big "S" centred, still spinning
+    drawSpinningS(W / 2, H / 2 - H * 0.1, sSize() * 1.8, ball.angle);
+
+    ctx.fillStyle   = INK;
+    ctx.globalAlpha = 0.9;
+    ctx.font        = `bold ${Math.round(H * 0.08)}px 'Courier New', monospace`;
+    ctx.fillText('game over_', W / 2, H / 2 + H * 0.06);
+
+    ctx.globalAlpha = 0.4;
+    ctx.font        = `${Math.round(H * 0.038)}px 'Courier New', monospace`;
+    const sub = hiScore > 0
+      ? `score ${score}  ·  best ${hiScore}  ·  click to retry`
+      : `score ${score}  ·  click to retry`;
+    ctx.fillText(sub, W / 2, H / 2 + H * 0.15);
+
     ctx.restore();
   }
 
-  // ── loop ────────────────────────────────────────────────────────
-  function loop() { update(); draw(); requestAnimationFrame(loop); }
+  // ── Loop ──────────────────────────────────────────────────────────
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
 
   window.addEventListener('resize', init);
   init();
