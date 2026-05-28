@@ -7,29 +7,21 @@
 <style>
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-:root {
-  --ink: #f0ebe0;
-  --bg:  #0b0b0b;
-}
-
-html, body { height: 100%; }
-
 body {
-  background: var(--bg);
-  color: var(--ink);
-  font-family: 'Courier New', Courier, monospace;
+  background: #fff;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
 }
 
 .page-content {
   flex: 1;
   display: grid;
   place-items: center;
+  font-family: Georgia, serif;
   font-size: clamp(2rem, 5vw, 4rem);
-  letter-spacing: -0.03em;
-  opacity: 0.1;
+  color: #000;
+  opacity: 0.08;
   user-select: none;
   pointer-events: none;
 }
@@ -40,26 +32,11 @@ body {
 
 .subtitles-game-section {
   width: 100%;
-  font-family: 'Courier New', Courier, monospace;
-}
-
-.sg-bar {
-  border-top: 1px solid rgba(240, 235, 224, 0.1);
-  padding: 7px 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 9px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink);
-  opacity: 0.28;
+  border-top: 1px solid #e8e8e8;
 }
 
 .sg-shell {
-  position: relative;
   width: 100%;
-  background: var(--bg);
   overflow: hidden;
 }
 
@@ -68,50 +45,19 @@ body {
   width: 100%;
   height: 440px;
   cursor: none;
-}
-
-/* CRT scanlines */
-.sg-shell::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 3px,
-    rgba(0, 0, 0, 0.07) 3px,
-    rgba(0, 0, 0, 0.07) 4px
-  );
-  pointer-events: none;
-  z-index: 2;
-}
-
-.sg-hint {
-  border-top: 1px solid rgba(240, 235, 224, 0.06);
-  padding: 7px 16px;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-align: center;
-  text-transform: uppercase;
-  color: var(--ink);
-  opacity: 0.16;
+  background: #fff;
 }
 </style>
 </head>
 <body>
 
-<div class="page-content">subtitles<span style="opacity:.35">_</span></div>
+<div class="page-content">subtitles_</div>
 
 <!-- ── GAME SECTION ── -->
 <section class="subtitles-game-section">
-  <div class="sg-bar">
-    <span>subtitles.exe</span>
-    <span>squash · 1p</span>
-  </div>
   <div class="sg-shell">
     <canvas id="subtitles-game"></canvas>
   </div>
-  <div class="sg-hint">move mouse · click or space to serve</div>
 </section>
 
 <script>
@@ -122,91 +68,84 @@ body {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
-  const INK   = '#f0ebe0';
-  const BG    = '#0b0b0b';
-  const LIVES = 3;
+  // ── SVG assets ─────────────────────────────────────────────────
+  const SVG_S   = 'https://static.wixstatic.com/shapes/c075ce_1a7aa87f422a4bf3b1ddbe7231812dec.svg';
+  const SVG_BAR = 'https://static.wixstatic.com/shapes/c075ce_11f249ee6960400d9fb0f062c7a53111.svg';
+
+  const imgS   = new Image(); imgS.src   = SVG_S;
+  const imgBar = new Image(); imgBar.src = SVG_BAR;
+
+  // ── Constants ──────────────────────────────────────────────────
+  const LIVES      = 3;
+  const PADDLE_H   = 8;   // px — bar SVG stretched to this height
+
+  // ── Sizing helpers ─────────────────────────────────────────────
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const rnd   = (lo, hi)    => lo + Math.random() * (hi - lo);
 
   let W, H;
+  const sSize   = () => clamp(Math.round(H * 0.115), 32, 58);
+  const sRadius = () => sSize() * 0.43;
 
-  function resize() {
+  // ── State ──────────────────────────────────────────────────────
+  let phase = 'idle';
+  let score, lives, hiScore = 0;
+  let paddle, ball, mouseX = -1;
+
+  // ── Init ───────────────────────────────────────────────────────
+  function init() {
     W = canvas.offsetWidth;
     H = canvas.offsetHeight;
     canvas.width  = W;
     canvas.height = H;
-  }
-
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const rnd   = (lo, hi)    => lo + Math.random() * (hi - lo);
-
-  // The S rendered at this height in px
-  const sSize = () => clamp(Math.round(H * 0.115), 32, 58);
-  // Collision radius — roughly half the cap-height
-  const sRadius = () => sSize() * 0.42;
-
-  // ── State ──────────────────────────────────────────────────────
-  let phase = 'idle'; // idle | play | over
-  let score, lives, hiScore = 0;
-  let paddle, ball;
-  let mouseX     = -1;
-  let ceilFlash  = 0; // frames to flash ceiling after ceiling hit
-  let paddleFlash = 0; // frames to flash paddle after hit
-
-  // ── Init ────────────────────────────────────────────────────────
-  function init() {
-    resize();
 
     const pw = clamp(W * 0.14, 80, 160);
-    paddle = { x: W / 2 - pw / 2, y: H - 44, w: pw, h: 5 };
+    paddle = { x: W / 2 - pw / 2, y: H - 44, w: pw };
 
     ball = {
       x: W / 2,
       y: paddle.y - sRadius() - 4,
       vx: 0, vy: 0,
-      angle: 0,   // spin accumulator
+      angle: 0,
       stuck: true,
     };
 
-    score       = 0;
-    lives       = LIVES;
-    phase       = 'idle';
-    ceilFlash   = 0;
-    paddleFlash = 0;
+    score  = 0;
+    lives  = LIVES;
+    phase  = 'idle';
   }
 
-  // ── Launch ──────────────────────────────────────────────────────
+  // ── Serve ──────────────────────────────────────────────────────
   function serve() {
     if (phase === 'over') init();
-    const spd = clamp(H * 0.011, 5, 10);
-    const a   = -Math.PI / 2 + rnd(-0.45, 0.45);
-    ball.vx   = Math.cos(a) * spd;
-    ball.vy   = Math.sin(a) * spd;
+    const spd  = clamp(H * 0.011, 5, 10);
+    const a    = -Math.PI / 2 + rnd(-0.45, 0.45);
+    ball.vx    = Math.cos(a) * spd;
+    ball.vy    = Math.sin(a) * spd;
     ball.stuck = false;
     phase      = 'play';
   }
 
-  // ── Input ────────────────────────────────────────────────────────
+  // ── Input ──────────────────────────────────────────────────────
   function ptrX(e) {
-    const rect = canvas.getBoundingClientRect();
-    return ((e.touches ? e.touches[0].clientX : e.clientX) - rect.left) * (W / rect.width);
+    const r = canvas.getBoundingClientRect();
+    return ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) * (W / r.width);
   }
 
   canvas.addEventListener('mousemove',  e => { mouseX = ptrX(e); });
   canvas.addEventListener('click',      e => { mouseX = ptrX(e); serve(); });
   canvas.addEventListener('touchmove',  e => { e.preventDefault(); mouseX = ptrX(e); }, { passive: false });
   canvas.addEventListener('touchstart', e => { mouseX = ptrX(e); serve(); }, { passive: false });
-
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown',  e => {
     if (e.code === 'Space') { e.preventDefault(); serve(); }
   });
 
-  // ── Update ────────────────────────────────────────────────────────
+  // ── Update ─────────────────────────────────────────────────────
   function update() {
-    // paddle tracks mouse
     if (mouseX >= 0) {
       paddle.x = clamp(mouseX - paddle.w / 2, 0, W - paddle.w);
     }
 
-    // stuck ball rides paddle centre
     if (ball.stuck) {
       ball.x = paddle.x + paddle.w / 2;
       ball.y = paddle.y - sRadius() - 4;
@@ -216,56 +155,36 @@ body {
 
     ball.x += ball.vx;
     ball.y += ball.vy;
-
-    // Spin: driven by horizontal velocity so it feels physical
-    ball.angle += ball.vx * 0.055;
+    ball.angle += ball.vx * 0.055; // spin driven by horizontal velocity
 
     const r = sRadius();
 
-    // ── Walls ──
-    if (ball.x - r < 0) {
-      ball.x = r;
-      ball.vx = Math.abs(ball.vx);
-    }
-    if (ball.x + r > W) {
-      ball.x = W - r;
-      ball.vx = -Math.abs(ball.vx);
-    }
+    // walls
+    if (ball.x - r < 0)  { ball.x = r;     ball.vx =  Math.abs(ball.vx); }
+    if (ball.x + r > W)  { ball.x = W - r; ball.vx = -Math.abs(ball.vx); }
+    if (ball.y - r < 0)  { ball.y = r;     ball.vy =  Math.abs(ball.vy); }
 
-    // ── Ceiling ──
-    if (ball.y - r < 0) {
-      ball.y = r;
-      ball.vy = Math.abs(ball.vy);
-      ceilFlash = 10;
-    }
+    // prevent perfectly horizontal travel
+    if (Math.abs(ball.vy) < 2) ball.vy = ball.vy < 0 ? -2 : 2;
 
-    // Ensure the ball never goes completely horizontal
-    if (Math.abs(ball.vy) < 2) {
-      ball.vy = ball.vy < 0 ? -2 : 2;
-    }
-
-    // ── Paddle (underscore) ──
-    const { x: px, y: py, w: pw, h: ph } = paddle;
+    // paddle
+    const { x: px, y: py, w: pw } = paddle;
     if (
       ball.vy > 0 &&
       ball.y + r >= py &&
-      ball.y - r <= py + ph + 5 &&
+      ball.y - r <= py + PADDLE_H + 5 &&
       ball.x + r >= px &&
       ball.x - r <= px + pw
     ) {
-      // Deflect angle based on hit position along paddle
       const rel   = clamp((ball.x - (px + pw / 2)) / (pw / 2), -1, 1);
       const angle = rel * (58 * Math.PI / 180) - Math.PI / 2;
       const spd   = clamp(Math.hypot(ball.vx, ball.vy), 4, H * 0.02);
-
       ball.vx = Math.cos(angle) * spd;
       ball.vy = Math.sin(angle) * spd;
       ball.y  = py - r - 1;
-
       score++;
-      paddleFlash = 14;
 
-      // Speed nudge every 5 hits
+      // gentle speed increase every 5 hits
       if (score % 5 === 0) {
         const s  = Math.hypot(ball.vx, ball.vy);
         const ns = Math.min(s * 1.1, H * 0.022);
@@ -274,7 +193,7 @@ body {
       }
     }
 
-    // ── Ball lost ──
+    // ball lost
     if (ball.y - r > H + 30) {
       if (--lives <= 0) {
         hiScore = Math.max(hiScore, score);
@@ -286,124 +205,96 @@ body {
         phase      = 'idle';
       }
     }
-
-    if (ceilFlash   > 0) ceilFlash--;
-    if (paddleFlash > 0) paddleFlash--;
   }
 
-  // ── Draw ──────────────────────────────────────────────────────────
-  function drawSpinningS(x, y, size, angle) {
+  // ── Draw helpers ───────────────────────────────────────────────
+  function drawS(x, y, size, angle) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
-    ctx.font         = `900 ${size}px Georgia, 'Times New Roman', serif`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle    = INK;
-    ctx.shadowColor  = INK;
-    ctx.shadowBlur   = 18;
-    ctx.fillText('S', 0, 2); // +2 optical correction for serif baseline
+    if (imgS.complete && imgS.naturalWidth > 0) {
+      ctx.drawImage(imgS, -size / 2, -size / 2, size, size);
+    } else {
+      // fallback until SVG loads
+      ctx.font         = `900 ${size}px Georgia, serif`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle    = '#000';
+      ctx.fillText('S', 0, 2);
+    }
     ctx.restore();
   }
 
-  function draw() {
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, W, H);
-
-    // ── Ceiling line ──
-    ctx.save();
-    ctx.globalAlpha = ceilFlash > 0 ? 0.9 : 0.1;
-    ctx.shadowColor = INK;
-    ctx.shadowBlur  = ceilFlash > 0 ? 16 : 0;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth   = ceilFlash > 0 ? 2 : 1;
-    ctx.beginPath();
-    ctx.moveTo(0, 1);
-    ctx.lineTo(W, 1);
-    ctx.stroke();
-    ctx.restore();
-
-    // ── Paddle (the underscore) ──
-    ctx.save();
-    ctx.shadowColor = INK;
-    ctx.shadowBlur  = paddleFlash > 0 ? 24 : 12;
-    ctx.globalAlpha = paddleFlash > 0 ? 1 : 0.88;
-    ctx.fillStyle   = INK;
-    ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
-    ctx.restore();
-
-    // ── Ball ──
-    ctx.save();
-    ctx.shadowColor = INK;
-    ctx.shadowBlur  = 12;
-    drawSpinningS(ball.x, ball.y, sSize(), ball.angle);
-    ctx.restore();
-
-    // ── HUD ──
-    ctx.save();
-    ctx.fillStyle    = INK;
-    ctx.globalAlpha  = 0.3;
-    ctx.font         = `9px 'Courier New', monospace`;
-    ctx.textBaseline = 'bottom';
-    ctx.textAlign    = 'left';
-    ctx.fillText(`score  ${String(score).padStart(4, '0')}`, 14, H - 10);
-    ctx.textAlign    = 'right';
-    const pips = '●'.repeat(lives) + '·'.repeat(LIVES - lives);
-    ctx.fillText(`lives  ${pips}`, W - 14, H - 10);
-    ctx.restore();
-
-    // ── Overlays ──
-    if (phase === 'idle') {
-      hintText('click or space to serve');
-    } else if (phase === 'over') {
-      gameOverOverlay();
+  function drawBar(x, y, w) {
+    if (imgBar.complete && imgBar.naturalWidth > 0) {
+      ctx.drawImage(imgBar, x, y, w, PADDLE_H);
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(x, y, w, PADDLE_H);
     }
   }
 
-  function hintText(msg) {
+  // ── Draw ───────────────────────────────────────────────────────
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    if (phase === 'over') {
+      // white wash
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, W, H);
+
+      // big spinning S centred
+      const bigSz = sSize() * 2.2;
+      drawS(W / 2, H / 2 - H * 0.08, bigSz, ball.angle);
+
+      // minimal restart hint
+      ctx.save();
+      ctx.fillStyle    = '#000';
+      ctx.globalAlpha  = 0.18;
+      ctx.font         = `10px 'Courier New', monospace`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'top';
+      const sub = hiScore > 0
+        ? `${score}  ·  best ${hiScore}  ·  click to retry`
+        : `${score}  ·  click to retry`;
+      ctx.fillText(sub, W / 2, H / 2 + sSize() * 1.25);
+      ctx.restore();
+      return;
+    }
+
+    // bar (paddle)
+    drawBar(paddle.x, paddle.y, paddle.w);
+
+    // ball
+    drawS(ball.x, ball.y, sSize(), ball.angle);
+
+    // minimal HUD: score right, lives left
     ctx.save();
-    ctx.fillStyle    = INK;
-    ctx.globalAlpha  = 0.3;
-    ctx.font         = `${Math.round(H * 0.04)}px 'Courier New', monospace`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    // Position above HUD strip
-    ctx.fillText(msg, W / 2, H - 36);
+    ctx.fillStyle    = '#000';
+    ctx.globalAlpha  = 0.2;
+    ctx.font         = `10px 'Courier New', monospace`;
+    ctx.textBaseline = 'bottom';
+    ctx.textAlign    = 'left';
+    ctx.fillText('●'.repeat(lives) + '·'.repeat(LIVES - lives), 14, H - 12);
+    ctx.textAlign    = 'right';
+    ctx.fillText(String(score).padStart(4, '0'), W - 14, H - 12);
     ctx.restore();
+
+    // serve hint on idle
+    if (phase === 'idle') {
+      ctx.save();
+      ctx.fillStyle    = '#000';
+      ctx.globalAlpha  = 0.15;
+      ctx.font         = `10px 'Courier New', monospace`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('click to serve', W / 2, H - 12);
+      ctx.restore();
+    }
   }
 
-  function gameOverOverlay() {
-    ctx.fillStyle = 'rgba(11,11,11,0.84)';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.save();
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-
-    // Big "S" centred, still spinning
-    drawSpinningS(W / 2, H / 2 - H * 0.1, sSize() * 1.8, ball.angle);
-
-    ctx.fillStyle   = INK;
-    ctx.globalAlpha = 0.9;
-    ctx.font        = `bold ${Math.round(H * 0.08)}px 'Courier New', monospace`;
-    ctx.fillText('game over_', W / 2, H / 2 + H * 0.06);
-
-    ctx.globalAlpha = 0.4;
-    ctx.font        = `${Math.round(H * 0.038)}px 'Courier New', monospace`;
-    const sub = hiScore > 0
-      ? `score ${score}  ·  best ${hiScore}  ·  click to retry`
-      : `score ${score}  ·  click to retry`;
-    ctx.fillText(sub, W / 2, H / 2 + H * 0.15);
-
-    ctx.restore();
-  }
-
-  // ── Loop ──────────────────────────────────────────────────────────
-  function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-  }
+  // ── Loop ───────────────────────────────────────────────────────
+  function loop() { update(); draw(); requestAnimationFrame(loop); }
 
   window.addEventListener('resize', init);
   init();
