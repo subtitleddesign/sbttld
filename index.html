@@ -77,7 +77,7 @@ body {
 
   // ── Constants ──────────────────────────────────────────────────
   const LIVES      = 3;
-  const PADDLE_H   = 8;   // px — bar SVG stretched to this height
+  const PADDLE_H   = 18;  // px — bar SVG stretched to this height
 
   // ── Sizing helpers ─────────────────────────────────────────────
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -99,7 +99,7 @@ body {
     canvas.width  = W;
     canvas.height = H;
 
-    const pw = clamp(W * 0.14, 80, 160);
+    const pw = clamp(W * 0.22, 120, 260);
     paddle = { x: W / 2 - pw / 2, y: H - 44, w: pw };
 
     ball = {
@@ -118,7 +118,7 @@ body {
   // ── Serve ──────────────────────────────────────────────────────
   function serve() {
     if (phase === 'over') init();
-    const spd  = clamp(H * 0.011, 5, 10);
+    const spd  = clamp(H * 0.006, 3, 5);
     const a    = -Math.PI / 2 + rnd(-0.45, 0.45);
     ball.vx    = Math.cos(a) * spd;
     ball.vy    = Math.sin(a) * spd;
@@ -165,7 +165,7 @@ body {
     if (ball.y - r < 0)  { ball.y = r;     ball.vy =  Math.abs(ball.vy); }
 
     // prevent perfectly horizontal travel
-    if (Math.abs(ball.vy) < 2) ball.vy = ball.vy < 0 ? -2 : 2;
+    if (Math.abs(ball.vy) < 1) ball.vy = ball.vy < 0 ? -1 : 1;
 
     // paddle
     const { x: px, y: py, w: pw } = paddle;
@@ -178,7 +178,7 @@ body {
     ) {
       const rel   = clamp((ball.x - (px + pw / 2)) / (pw / 2), -1, 1);
       const angle = rel * (58 * Math.PI / 180) - Math.PI / 2;
-      const spd   = clamp(Math.hypot(ball.vx, ball.vy), 4, H * 0.02);
+      const spd   = clamp(Math.hypot(ball.vx, ball.vy), 3, H * 0.012);
       ball.vx = Math.cos(angle) * spd;
       ball.vy = Math.sin(angle) * spd;
       ball.y  = py - r - 1;
@@ -187,7 +187,7 @@ body {
       // gentle speed increase every 5 hits
       if (score % 5 === 0) {
         const s  = Math.hypot(ball.vx, ball.vy);
-        const ns = Math.min(s * 1.1, H * 0.022);
+        const ns = Math.min(s * 1.08, H * 0.014);
         ball.vx  = (ball.vx / s) * ns;
         ball.vy  = (ball.vy / s) * ns;
       }
@@ -226,11 +226,10 @@ body {
   }
 
   function drawBar(x, y, w) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x, y, w, PADDLE_H);   // always draw solid black bar
     if (imgBar.complete && imgBar.naturalWidth > 0) {
-      ctx.drawImage(imgBar, x, y, w, PADDLE_H);
-    } else {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(x, y, w, PADDLE_H);
+      ctx.drawImage(imgBar, x, y, w, PADDLE_H); // SVG on top if loaded
     }
   }
 
