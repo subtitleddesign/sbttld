@@ -7,7 +7,22 @@ export const slug = (name: string) => name.trim().replace(/[^\w-]+/g, '-').repla
 
 export const fileBase = (designName: string, f: Format) => `${slug(designName)}_${f.id}_${f.width}x${f.height}`;
 
-export function download(blob: Blob, filename: string): void {
+type Downloads = { save(r: { filename: string; data: Blob }): Promise<unknown> };
+type ClaudeHost = { use(name: 'downloads'): Promise<Downloads | null> };
+
+/**
+ * Saves a file. Inside a claude.ai artifact the page can't start downloads
+ * itself, so it asks the viewer through the host's downloads capability.
+ */
+export async function download(blob: Blob, filename: string): Promise<void> {
+  const host = (window as { claude?: ClaudeHost }).claude;
+  const downloads = host ? await host.use('downloads') : null;
+  if (downloads) {
+    await downloads.save({ filename, data: blob }).catch((e: { code?: string; message?: string }) => {
+      if (e?.code !== 'declined') throw new Error(e?.message ?? 'Download failed');
+    });
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -63,7 +78,7 @@ export async function exportVideo(
   let gain: GainNode | undefined;
   if (audio) {
     actx = new AudioContext();
-    const buf = await actx.decodeAudioData(await (await fetch(audio.dataUrl)).arrayBuffer());
+    const buf = await actx.decodeAudioData(dataUrlToBuffer(audio.dataUrl));
     const dest = actx.createMediaStreamDestination();
     gain = actx.createGain();
     source = actx.createBufferSource();
@@ -107,6 +122,13 @@ export async function exportVideo(
   stream.getTracks().forEach((tr) => tr.stop());
 
   return { blob: new Blob(chunks, { type: mimeType.split(';')[0] }), ext: mimeType.startsWith('video/mp4') ? 'mp4' : 'webm' };
+}
+
+function dataUrlToBuffer(dataUrl: string): ArrayBuffer {
+  const bin = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
 }
 
 export async function zip(files: { name: string; blob: Blob }[]): Promise<Blob> {

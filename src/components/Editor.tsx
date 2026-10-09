@@ -30,6 +30,8 @@ export function Editor({ client, designs, assetVersion, onSaveDesign, onDeleteDe
   const [playStart, setPlayStart] = useState<number>();
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [status, setStatus] = useState('');
+  // Browser confirm() dialogs are blocked inside claude.ai artifacts, so confirm inline.
+  const [pending, setPending] = useState<{ message: string; label: string; run: () => void }>();
 
   useEffect(() => {
     setDesign(newDesign(client));
@@ -80,17 +82,22 @@ export function Editor({ client, designs, assetVersion, onSaveDesign, onDeleteDe
     setStatus('Saved');
   };
 
-  const open = (d: Design) => {
-    if (dirty && !confirm('Discard unsaved changes?')) return;
-    setDesign(structuredClone(d));
-    setDirty(false);
+  const discardThen = (run: () => void) => {
+    if (dirty) setPending({ message: 'You have unsaved changes.', label: 'Discard changes', run });
+    else run();
   };
 
-  const startNew = () => {
-    if (dirty && !confirm('Discard unsaved changes?')) return;
-    setDesign(newDesign(client, design.templateId));
-    setDirty(false);
-  };
+  const open = (d: Design) =>
+    discardThen(() => {
+      setDesign(structuredClone(d));
+      setDirty(false);
+    });
+
+  const startNew = () =>
+    discardThen(() => {
+      setDesign(newDesign(client, design.templateId));
+      setDirty(false);
+    });
 
   const withBusy = async (id: string, label: string, fn: () => Promise<void>) => {
     setBusy((b) => ({ ...b, [id]: label }));
@@ -107,21 +114,21 @@ export function Editor({ client, designs, assetVersion, onSaveDesign, onDeleteDe
   const audio = plan.audio ? design.audio : undefined;
 
   const pngOne = (f: Format) =>
-    withBusy(f.id, 'Rendering…', async () => download(await exportPng(renderInput(f)), `${fileBase(design.name, f)}.png`));
+    withBusy(f.id, 'Rendering…', async () => await download(await exportPng(renderInput(f)), `${fileBase(design.name, f)}.png`));
 
   const videoOne = (f: Format) =>
     withBusy(f.id, 'Recording 0%', async () => {
       const { blob, ext } = await exportVideo({ ...renderInput(f), duration: design.duration }, audio, (p) =>
         setBusy((b) => ({ ...b, [f.id]: `Recording ${Math.round(p * 100)}%` })),
       );
-      download(blob, `${fileBase(design.name, f)}.${ext}`);
+      await download(blob, `${fileBase(design.name, f)}.${ext}`);
     });
 
   const pngAll = () =>
     withBusy('all', 'Rendering PNGs…', async () => {
       const files = [];
       for (const f of formats) files.push({ name: `${fileBase(design.name, f)}.png`, blob: await exportPng(renderInput(f)) });
-      download(await zip(files), `${slug(design.name)}_${group.toLowerCase()}_png.zip`);
+      await download(await zip(files), `${slug(design.name)}_${group.toLowerCase()}_png.zip`);
     });
 
   const videoAll = () =>
@@ -133,7 +140,7 @@ export function Editor({ client, designs, assetVersion, onSaveDesign, onDeleteDe
         );
         files.push({ name: `${fileBase(design.name, f)}.${ext}`, blob });
       }
-      download(await zip(files), `${slug(design.name)}_${group.toLowerCase()}_video.zip`);
+      await download(await zip(files), `${slug(design.name)}_${group.toLowerCase()}_video.zip`);
     });
 
   const onImage = async (key: string, file?: File) => {
@@ -260,6 +267,25 @@ export function Editor({ client, designs, assetVersion, onSaveDesign, onDeleteDe
               New
             </button>
           </div>
+          {pending && (
+            <div className="confirm">
+              <span>{pending.message}</span>
+              <div className="row">
+                <button
+                  className="btn small danger"
+                  onClick={() => {
+                    pending.run();
+                    setPending(undefined);
+                  }}
+                >
+                  {pending.label}
+                </button>
+                <button className="btn small ghost" onClick={() => setPending(undefined)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {status && <p className="muted small">{status}</p>}
         </section>
 
@@ -273,7 +299,7 @@ export function Editor({ client, designs, assetVersion, onSaveDesign, onDeleteDe
                   {d.name}
                   <span className="muted small">{new Date(d.updatedAt).toLocaleDateString()}</span>
                 </button>
-                <button className="btn small ghost" onClick={() => confirm(`Delete "${d.name}"?`) && onDeleteDesign(d.id)}>
+                <button className="btn small ghost" onClick={() => setPending({ message: `Delete "${d.name}"?`, label: 'Delete', run: () => onDeleteDesign(d.id) })}>
                   ✕
                 </button>
               </li>
